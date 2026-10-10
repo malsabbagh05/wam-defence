@@ -1,0 +1,48 @@
+# Deploys the site to GitHub Pages on every push to main.
+# Appends ?v=<commit sha> to the CSS/JS URLs in index.html so browsers
+# fetch fresh files after each deploy instead of serving cached copies.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build site with cache-busted asset URLs
+        run: |
+          VERSION="${GITHUB_SHA::7}"
+          mkdir -p _site
+          cp -r index.html style.css js _site/
+          sed -i -E \
+            -e "s#(src=\"js/[^\"?]+\.js)\"#\1?v=${VERSION}\"#g" \
+            -e "s#(href=\"style\.css)\"#\1?v=${VERSION}\"#g" \
+            _site/index.html
+          echo "Stamped assets with v=${VERSION}:"
+          grep -E 'v=' _site/index.html
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v5
