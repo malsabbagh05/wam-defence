@@ -222,7 +222,7 @@ class Game {
     const e = {
       id: this.nextId++, type, hp, maxHp: hp, dist: d, x: p.x, y: p.y,
       alive: true, pause: 0, t: this.rng() * 5, invisible: false, slow: 0,
-      speedMul: 1, phase: 1, flash: 0, sprinting: false,
+      speedMul: 1, phase: 1, flash: 0, sprinting: false, age: 0,
     };
     this.enemies.push(e);
     if (type === 'finalexam') {
@@ -240,6 +240,7 @@ class Game {
     const armour = ignoreArmour ? 0 : (DATA.enemies[e.type].armour || 0);
     e.hp -= Math.max(1, dmg - armour);
     e.flash = 0.1;
+    this.emit('hit', { enemy: e, ai: !!ignoreArmour });
     if (e.hp <= 0) {
       this.killEnemy(e);
     } else if (e.type === 'finalexam') {
@@ -254,14 +255,14 @@ class Game {
       this.setBanner('Phase 2: Short Answer', 3);
       const mix = ['report', 'ghost', 'report', 'ghost', 'report', 'ghost', 'report', 'report', 'report'];
       for (const type of mix) this.spawnQueue.push({ type });
-      this.emit('phase', 2);
+      this.emit('phase', { phase: 2, enemy: e });
     }
     if (e.phase < 3 && frac < 0.33) {
       e.phase = 3;
       e.speedMul = 1.5;
       this.setBanner('Phase 3: Essay. The exam speeds up!', 3);
       this.spawnQueue.push({ type: 'major' }, { type: 'major' });
-      this.emit('phase', 3);
+      this.emit('phase', { phase: 3, enemy: e });
     }
   }
 
@@ -290,7 +291,7 @@ class Game {
     this.stats.wamLost += before - this.wam;
     if (def.spPenalty) this.sp = Math.max(0, this.sp - def.spPenalty);
     const p = this.path.at(this.path.total);
-    this.floatText(p.x - 0.8, p.y - 0.4, '-' + def.dmg + ' WAM', '#ff6b6b');
+    this.floatText(p.x - 1.4, p.y - 0.4, '-' + def.dmg + ' WAM', '#ff6b6b');
     this.emit('leak', e);
     if (this.wam <= 0) this.lose();
   }
@@ -303,6 +304,7 @@ class Game {
 
   win() {
     this.phase = 'won';
+    this.banner = null;
     this.enemies = [];
     this.spawnQueue = [];
     this.result = { wam: this.wam, grade: this.gradeFor(this.wam), perfect: this.wam === DATA.START_WAM };
@@ -363,6 +365,7 @@ class Game {
       if (!e.alive) continue;
       const def = DATA.enemies[e.type];
       e.t += dt;
+      e.age += dt;
       if (e.flash > 0) e.flash -= dt;
       if (e.type === 'ghost') e.invisible = e.t % 5 >= 3;
 
@@ -402,6 +405,7 @@ class Game {
         .sort((a, b) => b.dist - a.dist);
       if (targets.length === 0) continue;
       t.cd = s.interval;
+      this.emit('fire', t);
 
       if (t.kind === 'lecturer') {
         for (const e of targets.slice(0, s.targets)) {
@@ -412,6 +416,7 @@ class Game {
         const e = targets[0];
         if (this.rng() < this.hallucChance(t)) {
           this.floatText(t.x, t.y - 0.5, '?', '#d1b3ff');
+          this.emit('miss', t);
           this.addFx({ kind: 'beam', x1: t.x, y1: t.y, x2: e.x, y2: e.y, color: 'rgba(179,136,255,0.3)', life: 0.12 });
         } else {
           this.damageEnemy(e, s.damage, true);

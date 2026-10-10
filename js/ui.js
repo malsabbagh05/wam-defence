@@ -9,6 +9,14 @@
   const T = DATA.TILE;
   const TOWER_KINDS = Object.keys(DATA.towers);
 
+  const reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  /** Small helper for one-off animations. Does nothing for players who prefer reduced motion. */
+  function animateEl(el, keyframes, duration) {
+    if (reducedMotion || !el.animate) return;
+    el.animate(keyframes, { duration, easing: 'ease-out' });
+  }
+
   const game = new Game();
   const canvas = $('game');
   const renderer = new Renderer(canvas, game);
@@ -32,6 +40,7 @@
     hideOverlay,
     syncAfterChange,
   };
+  app.renderer = renderer;
   window.app = app;
 
   // ----------------------------------------------------------------- toast
@@ -49,6 +58,7 @@
 
   function showOverlay(name, html) {
     app.overlay = name;
+    $('overlay').classList.remove('celebrate');
     $('overlay-card').innerHTML = html;
     $('overlay').classList.remove('hidden');
     const primary = $('overlay-card').querySelector('button.primary');
@@ -126,6 +136,7 @@
         '<span>Towers standing</span><span>' + built + '</span>' +
         '</div>' +
         '<div class="overlay-buttons"><button type="button" class="primary" data-act="again">Play again</button></div>');
+      $('overlay').classList.add('celebrate'); // lighter backdrop so the confetti shows through
     } else {
       showOverlay('end',
         '<h2>Withdrawn from unit</h2>' +
@@ -214,24 +225,38 @@
   }
 
   const hudCache = {};
+  /** Updates text only when it changes. Returns true if it changed. */
   function setText(id, text) {
-    if (hudCache[id] !== text) {
-      hudCache[id] = text;
-      $(id).textContent = text;
+    if (hudCache[id] === text) return false;
+    const first = hudCache[id] === undefined;
+    hudCache[id] = text;
+    $(id).textContent = text;
+    return !first;
+  }
+
+  /** Updates a number and gives it a quick pop (green for up, red for down). */
+  function setNumber(id, value) {
+    const prev = hudCache[id] === undefined ? value : Number(hudCache[id]);
+    if (setText(id, String(value))) {
+      animateEl($(id), [{ transform: 'scale(1.4)', color: value > prev ? '#a5f3a5' : '#ff8a80' }], 350);
     }
   }
 
   function refreshHud() {
-    setText('wam-val', String(game.wam));
-    setText('sp-val', String(game.sp));
+    setNumber('wam-val', game.wam);
+    setNumber('sp-val', game.sp);
     const fill = $('wam-fill');
     fill.style.width = game.wam + '%';
     fill.style.background = game.wam > 50 ? 'var(--good)' : game.wam > 25 ? 'var(--warn)' : 'var(--bad)';
     fill.parentElement.setAttribute('aria-valuenow', String(game.wam));
     const exam = game.week === DATA.EXAM_WEEK;
-    setText('week-label', exam ? 'Exam week' : 'Week ' + game.week + ' of ' + DATA.TEACHING_WEEKS);
     const phaseNames = { prep: 'Prep', wave: 'Wave', results: 'Results', won: 'Finished', lost: 'Withdrawn' };
-    setText('phase-label', phaseNames[game.phase]);
+    if (setText('phase-label', phaseNames[game.phase])) {
+      animateEl($('phase-label'), [{ transform: 'scale(1.3)', background: 'rgba(255,255,255,0.45)' }], 400);
+    }
+    if (setText('week-label', exam ? 'Exam week' : 'Week ' + game.week + ' of ' + DATA.TEACHING_WEEKS)) {
+      animateEl($('week-label'), [{ transform: 'translateY(-6px)', opacity: 0 }], 350);
+    }
     for (const el of $('week-track').children) {
       const w = Number(el.dataset.w);
       el.classList.toggle('now', w === game.week);
@@ -327,11 +352,18 @@
   }
 
   let lastInfoKey = '';
+  let lastInfoGroup = '';
   function refreshInfo() {
     const m = infoModel();
     if (m.key !== lastInfoKey) {
       lastInfoKey = m.key;
       $('info-body').innerHTML = m.html;
+      // Fade the panel in only when it switches to a different subject, not on every health tick.
+      const group = m.key.split(':').slice(0, 2).join(':');
+      if (group !== lastInfoGroup) {
+        lastInfoGroup = group;
+        animateEl($('info-body'), [{ opacity: 0, transform: 'translateY(5px)' }], 180);
+      }
     }
   }
 
@@ -500,15 +532,15 @@
 
   // ------------------------------------------------------------------- loop
 
-  game.onEvent = (name) => {
+  game.onEvent = (name, data) => {
+    renderer.handle(name, data);
     if (name === 'waveEnd') {
       if (!app.autoStart) showResults();
       else app.autoTimer = 1.5;
     } else if (name === 'win' || name === 'lose') {
       showEnd();
     } else if (name === 'leak') {
-      const bar = $('hud-wam');
-      bar.animate([{ transform: 'scale(1.15)', color: '#ff8a80' }, { transform: 'scale(1)' }], { duration: 300 });
+      animateEl($('hud-wam'), [{ transform: 'scale(1.15)', color: '#ff8a80' }, { transform: 'scale(1)' }], 300);
     }
   };
 
@@ -528,7 +560,11 @@
     const realDt = Math.min(0.1, (now - last) / 1000);
     last = now;
 
-    if (app.started && !app.paused && !app.overlay) {
+    const running = app.started && !app.paused && !app.overlay;
+    // Visual effects keep moving behind overlays (title, results, confetti) but freeze when paused.
+    if (!app.paused) renderer.update(realDt * (running ? app.speed : 1));
+
+    if (running) {
       runAutoStart(realDt);
       const total = realDt * app.speed;
       const steps = Math.max(1, Math.ceil(total / (1 / 30)));
